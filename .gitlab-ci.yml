@@ -1,0 +1,206 @@
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+default:
+  interruptible: true
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+variables:
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_DRIVER: overlay2
+  GIT_DEPTH: 1
+  DOCKERFILE_PATH: docker/Dockerfile
+  FOLDER_TO_ZIP: "hackthon-docs"
+
+stages:
+  - build_and_deploy
+  - compress_and_upload
+
+build:
+  stage: build_and_deploy
+  image: docker:24-cli
+  services:
+    - docker:24-dind
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  before_script:
+    - export REPO_NAME_LOWER=$(echo "$CI_PROJECT_NAME" | tr '[:upper:]' '[:lower:]')
+    - export IMAGE_NAME="${DOCKER_REGISTRY}/${REPO_NAME_LOWER}"
+    - echo "${DOCKER_PASSWORD}" | docker login "${DOCKER_REGISTRY}" -u "${DOCKER_USERNAME}" --password-stdin
+  script:
+    - docker pull "${IMAGE_NAME}:latest" || true
+    - docker build -f "${DOCKERFILE_PATH}" -t "${IMAGE_NAME}:latest" -t "${IMAGE_NAME}:${IMAGE_TAG}" --cache-from "${IMAGE_NAME}:latest" .
+    - docker push "${IMAGE_NAME}:latest" &
+    - docker push "${IMAGE_NAME}:${IMAGE_TAG}"
+    - wait
+  after_script:
+    - docker logout "${DOCKER_REGISTRY}" 2>/dev/null || true
+
+compress_and_upload:
+  stage: compress_and_upload
+  image: docker:24-cli
+  services:
+    - docker:24-dind
+  script:
+    - export TEAM_NAME=$(echo "$CI_PROJECT_NAME" | tr '[:upper:]' '[:lower:]')
+    - |
+      # Check if hackthon-docs folder has any changes
+      if [ "$CI_COMMIT_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+        CHANGES=$(git diff --name-only "$CI_COMMIT_BEFORE_SHA" "$CI_COMMIT_SHA" -- hackthon-docs 2>/dev/null | wc -l)
+      else
+        CHANGES=1
+      fi
+      
+      if [ "$CHANGES" -eq 0 ]; then
+        echo "ℹ️  No changes detected in hackthon-docs folder. Skipping upload."
+        exit 0
+      fi
+      
+      docker run --rm \
+        -v "$(pwd):/workspace" \
+        -e TEAM_NAME="${TEAM_NAME}" \
+        -e AZURE_STORAGE_ACCOUNT="${Application_Artifact_Storage_Name}" \
+        -e AZURE_STORAGE_KEY="${Application_Artifact_Storage_Key}" \
+        mcr.microsoft.com/azure-cli:2.61.0 bash -c '
+      set -e
+      
+      CONTAINER="${TEAM_NAME}"
+      
+      echo "📤 Uploading to Storage..."
+      
+      # Delete existing container
+      echo "🗑️  Deleting container '"'"'${CONTAINER}'"'"'..."
+      az storage container delete \
+        --name "${CONTAINER}" \
+        --account-name "${AZURE_STORAGE_ACCOUNT}" \
+        --account-key "${AZURE_STORAGE_KEY}" 2>/dev/null || echo "ℹ️  Container does not exist"
+      
+      # Wait for deletion to complete
+      sleep 2
+      
+      # Create new container with retry
+      echo "📝 Creating container '"'"'${CONTAINER}'"'"'..."
+      for i in {1..3}; do
+        if az storage container create \
+          --name "${CONTAINER}" \
+          --account-name "${AZURE_STORAGE_ACCOUNT}" \
+          --account-key "${AZURE_STORAGE_KEY}" 2>/dev/null; then
+          echo "✅ Container created successfully"
+          break
+        else
+          if [ $i -lt 3 ]; then
+            echo "⏳ Retrying container creation ($i/3)..."
+            sleep 2
+          else
+            echo "❌ Failed to create container after 3 attempts"
+            exit 1
+          fi
+        fi
+      done
+      
+      # Upload all files in bulk
+      echo "📤 Uploading hackthon-docs in bulk..."
+      az storage blob upload-batch \
+        --source "/workspace/hackthon-docs" \
+        --destination "${CONTAINER}" \
+        --account-name "${AZURE_STORAGE_ACCOUNT}" \
+        --account-key "${AZURE_STORAGE_KEY}" \
+        --max-connections 16
+      
+      echo "✅ Upload completed!"
+      '
+
+
+deploy_and_register:
+  stage: build_and_deploy
+  image: docker:24-cli
+  services:
+    - docker:24-dind
+  before_script:
+    - export REPO_NAME_LOWER=$(echo "$CI_PROJECT_NAME" | tr '[:upper:]' '[:lower:]')
+    - export IMAGE_NAME="${DOCKER_REGISTRY}/${REPO_NAME_LOWER}"
+    - export CONTAINER_APP_NAME="${REPO_NAME_LOWER}"
+  script:
+    - |
+      docker run --rm \
+        -v "$(pwd)/docker:/workspace" \
+        -e AZURE_CLIENT_ID="${AZURE_CLIENT_ID}" \
+        -e AZURE_CLIENT_SECRET="${AZURE_CLIENT_SECRET}" \
+        -e AZURE_TENANT_ID="${AZURE_TENANT_ID}" \
+        -e AZURE_SUBSCRIPTION_ID="${AZURE_SUBSCRIPTION_ID}" \
+        -e AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP}" \
+        -e CONTAINER_APP_ENVIRONMENT="${CONTAINER_APP_ENVIRONMENT}" \
+        -e DOCKER_REGISTRY="${DOCKER_REGISTRY}" \
+        -e DOCKER_USERNAME="${DOCKER_USERNAME}" \
+        -e DOCKER_PASSWORD="${DOCKER_PASSWORD}" \
+        -e IMAGE_NAME="${IMAGE_NAME}" \
+        -e IMAGE_TAG="${IMAGE_TAG}" \
+        -e CONTAINER_APP_NAME="${CONTAINER_APP_NAME}" \
+        -e REGISTRATION_API_URL="${REGISTRATION_API_URL}" \
+        -e CI_PIPELINE_ID="${CI_PIPELINE_ID}" \
+        mcr.microsoft.com/azure-cli:2.61.0 bash -c '
+      set -e
+      
+      # Install curl (try different package managers)
+      if command -v apt-get > /dev/null; then
+        apt-get update && apt-get install -y curl
+      elif command -v apk > /dev/null; then
+        apk add --no-cache curl
+      elif command -v yum > /dev/null; then
+        yum install -y curl
+      fi
+      
+      # Azure login
+      az login --service-principal \
+        -u "${AZURE_CLIENT_ID}" \
+        -p "${AZURE_CLIENT_SECRET}" \
+        --tenant "${AZURE_TENANT_ID}" --only-show-errors
+      az account set --subscription "${AZURE_SUBSCRIPTION_ID}"
+      
+      echo "Deploying ${CONTAINER_APP_NAME} (${IMAGE_NAME}:latest)"
+      
+      APP_URL=$(az deployment group create \
+        --name "mealie-${CI_PIPELINE_ID}" \
+        --resource-group "${AZURE_RESOURCE_GROUP}" \
+        --template-file /workspace/arm-template.json \
+        --parameters \
+          containerAppName="${CONTAINER_APP_NAME}" \
+          environmentName="${CONTAINER_APP_ENVIRONMENT}" \
+          dockerRegistry="${DOCKER_REGISTRY}" \
+          dockerUsername="${DOCKER_USERNAME}" \
+          dockerPassword="${DOCKER_PASSWORD}" \
+          imageName="${IMAGE_NAME}" \
+        --query '"'"'properties.outputs.fqdn.value'"'"' -o tsv --only-show-errors)
+      
+      echo "✅ Deployed to https://${APP_URL}"
+      
+      # Restart the container app
+      echo "Restarting container app..."
+      az containerapp revision restart \
+        --name "${CONTAINER_APP_NAME}" \
+        --resource-group "${AZURE_RESOURCE_GROUP}" \
+        --revision $(az containerapp revision list \
+          --name "${CONTAINER_APP_NAME}" \
+          --resource-group "${AZURE_RESOURCE_GROUP}" \
+          --query "[0].name" -o tsv) --only-show-errors || echo "⚠️  Restart command not available, container will restart automatically"
+      
+      # Register application
+      sleep 10
+      HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${REGISTRATION_API_URL}" \
+        -H "Content-Type: application/json" \
+        -d "{\"teamName\":\"${CONTAINER_APP_NAME}\",\"applicationUrl\":\"https://${APP_URL}\"}")
+      
+      if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+        echo "✅ Registered at ${REGISTRATION_API_URL}"
+      else
+        echo "⚠️  Registration returned HTTP ${HTTP_CODE}"
+      fi
+      '
+  allow_failure: false
+

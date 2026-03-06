@@ -1,0 +1,91 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "containerAppName": {"type": "string"},
+    "environmentName": {"type": "string"},
+    "location": {"type": "string", "defaultValue": "[resourceGroup().location]"},
+    "dockerRegistry": {"type": "string"},
+    "dockerUsername": {"type": "string"},
+    "dockerPassword": {"type": "securestring"},
+    "imageName": {"type": "string"},
+    "azureStorageName": {"type": "string", "defaultValue": "ai-dominance-hub-mount", "metadata": {"description": "Name of the storage configured in Container App Environment"}}
+  },
+  "resources": [
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2023-05-01",
+      "name": "[parameters('containerAppName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "environmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
+        "configuration": {
+          "ingress": {
+            "external": true,
+            "targetPort": 9000,
+            "allowInsecure": false,
+            "traffic": [{"latestRevision": true, "weight": 100}]
+          },
+          "registries": [
+            {
+              "server": "[parameters('dockerRegistry')]",
+              "username": "[parameters('dockerUsername')]",
+              "passwordSecretRef": "registry-password"
+            }
+          ],
+          "secrets": [
+            {
+              "name": "registry-password",
+              "value": "[parameters('dockerPassword')]"
+            }
+          ]
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "[concat('mealie-',parameters('containerAppName'))]",
+              "image": "[concat(parameters('imageName'), ':latest')]",
+              "resources": {"cpu": 0.5, "memory": "1Gi"},
+              "volumeMounts": [
+                {
+                  "volumeName": "[concat(parameters('containerAppName'), '-storage')]",
+                  "mountPath": "/app/data/sql",
+                  "subPath": "[concat(parameters('containerAppName'), '/data')]"
+                }
+              ],
+              "env": [
+                {"name": "DB_ENGINE", "value": "sqlite"},
+                {"name": "ALLOW_SIGNUP", "value": "false"},
+                {"name": "LOG_LEVEL", "value": "INFO"}
+              ],
+              "probes": [
+                {
+                  "type": "Startup",
+                  "httpGet": {"path": "/api/app/about", "port": 9000},
+                  "initialDelaySeconds": 30,
+                  "periodSeconds": 10,
+                  "failureThreshold": 30
+                }
+              ]
+            }
+          ],
+          "scale": {"minReplicas": 0, "maxReplicas": 1},
+          "volumes": [
+            {
+              "name": "[concat(parameters('containerAppName'), '-storage')]",
+              "storageType": "AzureFile",
+              "storageName": "[parameters('azureStorageName')]",
+              "mountOptions": "nobrl"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "fqdn": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2023-05-01').configuration.ingress.fqdn]"
+    }
+  }
+}

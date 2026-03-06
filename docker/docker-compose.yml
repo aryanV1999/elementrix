@@ -1,0 +1,75 @@
+services:
+  # SMTP Mail Service for Development/Testing
+  mailpit:
+    container_name: mealie_mailpit
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "8025:8025"  # Web UI
+      - "1025:1025"  # SMTP Port
+    networks:
+      - mealie-network
+
+  # Main Mealie Application
+  mealie:
+    container_name: mealie
+    image: mealie:dev
+    build:
+      context: ../
+      target: production
+      dockerfile: ./docker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mailpit:
+        condition: service_started
+    volumes:
+      - mealie-data:/app/data/
+    ports:
+      - "9091:9000"
+    environment:
+      # Core Settings
+      ALLOW_SIGNUP: "false"
+      LOG_LEVEL: "DEBUG"
+      BASE_URL: "http://localhost:9091"
+      
+      # Database Configuration - SQLite
+      DB_ENGINE: sqlite
+      
+      # Email Configuration
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      SMTP_FROM_NAME: "Mealie"
+      SMTP_AUTH_STRATEGY: "NONE"  # Options: NONE, TLS, SSL
+      SMTP_FROM_EMAIL: "mealie@localhost"
+      # SMTP_USER: ""
+      # SMTP_PASSWORD: ""
+      
+      # Optional Features
+      RECIPE_PUBLIC_SHARE: "true"
+      RECIPE_SHOW_NUTRITION: "true"
+      
+      # Security
+      # SECURITY_MAX_LOGIN_ATTEMPTS: 5
+      # SECURITY_USER_LOCKOUT_TIME: 30
+      
+      # Advanced
+      # WORKERS: 4
+    networks:
+      - mealie-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/api/app/about"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  mealie-data:
+    driver: local
+
+networks:
+  mealie-network:
+    driver: bridge
