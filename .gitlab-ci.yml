@@ -20,7 +20,6 @@ variables:
 
 stages:
   - build_and_deploy
-  - compress_and_upload
 
 build:
   stage: build_and_deploy
@@ -43,7 +42,7 @@ build:
     - docker logout "${DOCKER_REGISTRY}" 2>/dev/null || true
 
 compress_and_upload:
-  stage: compress_and_upload
+  stage: build_and_deploy
   image: docker:24-cli
   services:
     - docker:24-dind
@@ -74,35 +73,12 @@ compress_and_upload:
       
       echo "📤 Uploading to Storage..."
       
-      # Delete existing container
-      echo "🗑️  Deleting container '"'"'${CONTAINER}'"'"'..."
-      az storage container delete \
+      # Create container if not exists
+      echo "📝 Ensuring container '"'"'${CONTAINER}'"'"' exists..."
+      az storage container create \
         --name "${CONTAINER}" \
         --account-name "${AZURE_STORAGE_ACCOUNT}" \
-        --account-key "${AZURE_STORAGE_KEY}" 2>/dev/null || echo "ℹ️  Container does not exist"
-      
-      # Wait for deletion to complete
-      sleep 2
-      
-      # Create new container with retry
-      echo "📝 Creating container '"'"'${CONTAINER}'"'"'..."
-      for i in {1..3}; do
-        if az storage container create \
-          --name "${CONTAINER}" \
-          --account-name "${AZURE_STORAGE_ACCOUNT}" \
-          --account-key "${AZURE_STORAGE_KEY}" 2>/dev/null; then
-          echo "✅ Container created successfully"
-          break
-        else
-          if [ $i -lt 3 ]; then
-            echo "⏳ Retrying container creation ($i/3)..."
-            sleep 2
-          else
-            echo "❌ Failed to create container after 3 attempts"
-            exit 1
-          fi
-        fi
-      done
+        --account-key "${AZURE_STORAGE_KEY}" 2>/dev/null || true
       
       # Upload all files in bulk
       echo "📤 Uploading hackthon-docs in bulk..."
@@ -111,7 +87,27 @@ compress_and_upload:
         --destination "${CONTAINER}" \
         --account-name "${AZURE_STORAGE_ACCOUNT}" \
         --account-key "${AZURE_STORAGE_KEY}" \
-        --max-connections 16
+        --max-connections 16 \
+        --overwrite true
+      
+      echo "🧹 Cleaning up orphaned blobs..."
+      
+      cd /workspace/hackthon-docs
+      
+      az storage blob list \
+        --container-name "${CONTAINER}" \
+        --account-name "${AZURE_STORAGE_ACCOUNT}" \
+        --account-key "${AZURE_STORAGE_KEY}" \
+        --query "[].name" -o tsv | while read -r blob_name; do
+          if [ -n "$blob_name" ] && [ ! -f "$blob_name" ]; then
+            echo "🗑️  Deleting orphaned blob: $blob_name"
+            az storage blob delete \
+              --container-name "${CONTAINER}" \
+              --name "$blob_name" \
+              --account-name "${AZURE_STORAGE_ACCOUNT}" \
+              --account-key "${AZURE_STORAGE_KEY}"
+          fi
+        done
       
       echo "✅ Upload completed!"
       '
@@ -203,4 +199,3 @@ deploy_and_register:
       fi
       '
   allow_failure: false
-
