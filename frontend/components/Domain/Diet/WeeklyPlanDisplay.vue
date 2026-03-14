@@ -85,6 +85,16 @@
           <v-icon start>{{ $globals.icons.contentCopy }}</v-icon>
           {{ $t("diet-generator.copy-list") }}
         </v-btn>
+        
+        <v-btn 
+          color="success" 
+          variant="text"
+          :loading="savingRecipes"
+          @click="saveAsRecipes"
+        >
+          <v-icon start>{{ $globals.icons.create }}</v-icon>
+          {{ $t("diet-generator.save-as-recipes") }}
+        </v-btn>
       </v-card-actions>
     </v-card>
 
@@ -98,10 +108,13 @@
 
 <script setup lang="ts">
 import { ref, computed } from "vue";
+import { useUserApi } from "~/composables/api";
 import MealCard from "./MealCard.vue";
 import type { WeeklyDietPlan } from "~/lib/api/user/diet-generator";
 
 const { $globals } = useNuxtApp();
+const { $toast } = useNuxtApp();
+const userApi = useUserApi();
 
 const props = defineProps<{
   plan: WeeklyDietPlan;
@@ -113,6 +126,7 @@ defineEmits<{
 
 const selectedDay = ref(1);
 const checkedItems = ref<string[]>([]);
+const savingRecipes = ref(false);
 
 // Split grocery list into columns
 const groceryColumns = computed(() => {
@@ -142,5 +156,74 @@ function toggleItem(item: string) {
 async function copyGroceryList() {
   const list = props.plan.grocery_list?.join("\n") || "";
   await navigator.clipboard.writeText(list);
+  $toast.success("Grocery list copied to clipboard!");
+}
+
+async function saveAsRecipes() {
+  savingRecipes.value = true;
+  let savedCount = 0;
+  
+  try {
+    // Collect all unique meals from the weekly plan
+    const uniqueMeals = new Map<string, any>();
+    
+    props.plan.days.forEach(day => {
+      day.meals.forEach(meal => {
+        const mealKey = `${meal.name}-${meal.meal_type}`;
+        if (!uniqueMeals.has(mealKey)) {
+          uniqueMeals.set(mealKey, meal);
+        }
+      });
+    });
+    
+    // Save each unique meal as a recipe
+    for (const meal of uniqueMeals.values()) {
+      try {
+        // Create recipe using Mealie's CreateRecipe format
+        const recipeData = {
+          name: meal.name,
+          description: `Generated from diet plan - ${meal.meal_type}`,
+          recipe_yield: meal.serving_size || "1 serving",
+          prep_time: "PT15M", // Default 15 minutes prep
+          cook_time: "PT30M", // Default 30 minutes cook
+          recipe_ingredient: meal.ingredients?.map((ingredient, index) => ({
+            note: ingredient,
+            original_text: ingredient,
+            position: index + 1
+          })) || [],
+          recipe_instructions: meal.instructions ? [{
+            text: meal.instructions,
+            position: 1
+          }] : [],
+          nutrition: {
+            calories: meal.calories?.toString() || null,
+            protein: meal.protein?.toString() || null,
+            carbohydrate_content: meal.carbs?.toString() || null,
+            fat_content: meal.fat?.toString() || null
+          },
+          tags: [{ name: "Diet Plan" }, { name: meal.meal_type }],
+          recipe_category: [{ name: meal.meal_type }]
+        };
+        
+        const { data } = await userApi.recipes.createOne(recipeData);
+        if (data) {
+          savedCount++;
+        }
+      } catch (error) {
+        console.error(`Failed to save recipe for ${meal.name}:`, error);
+      }
+    }
+    
+    if (savedCount > 0) {
+      $toast.success(`Successfully saved ${savedCount} recipes from your diet plan!`);
+    } else {
+      $toast.warning("No recipes were saved. Please try again.");
+    }
+  } catch (error) {
+    console.error('Failed to save recipes:', error);
+    $toast.error("Failed to save recipes. Please try again.");
+  } finally {
+    savingRecipes.value = false;
+  }
 }
 </script>
