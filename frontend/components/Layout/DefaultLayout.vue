@@ -251,6 +251,12 @@ export default defineNuxtComponent({
         restricted: true,
       },
       {
+        icon: $globals.icons.food,
+        title: i18n.t("diet-generator.title"),
+        to: "/diet-generator",
+        restricted: true,
+      },
+      {
         icon: $globals.icons.timelineText,
         title: i18n.t("recipe.timeline"),
         to: `/g/${groupSlug.value}/recipes/timeline`,

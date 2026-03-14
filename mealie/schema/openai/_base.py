@@ -24,6 +24,16 @@ class OpenAIBase(BaseModel):
             return ""
 
         response = re.sub(RE_NULLS, "", response)
+        
+        # Handle Gemini's markdown code blocks (```json...```)
+        response = response.strip()
+        if response.startswith('```json') and response.endswith('```'):
+            # Remove ```json from start and ``` from end
+            response = response[7:-3].strip()
+        elif response.startswith('```') and response.endswith('```'):
+            # Remove generic ``` from start and end
+            response = response[3:-3].strip()
+            
         return response
 
     @classmethod

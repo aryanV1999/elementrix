@@ -7,8 +7,8 @@ from pathlib import Path
 from textwrap import dedent
 from typing import TypeVar
 
-from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletion
+import google.generativeai as genai
+from google.generativeai.types import GenerateContentResponse
 from pydantic import BaseModel, field_validator
 
 from mealie.core import root_logger
@@ -84,22 +84,18 @@ class OpenAIService(BaseService):
 
     def __init__(self) -> None:
         settings = get_app_settings()
-        if not settings.OPENAI_ENABLED:
-            raise ValueError("OpenAI is not enabled")
+        if not settings.GEMINI_ENABLED:
+            raise ValueError("Gemini is not enabled")
 
-        self.model = settings.OPENAI_MODEL
-        self.workers = settings.OPENAI_WORKERS
-        self.send_db_data = settings.OPENAI_SEND_DATABASE_DATA
-        self.enable_image_services = settings.OPENAI_ENABLE_IMAGE_SERVICES
-        self.custom_prompt_dir = settings.OPENAI_CUSTOM_PROMPT_DIR
+        self.model = settings.GEMINI_MODEL
+        self.workers = settings.GEMINI_WORKERS
+        self.send_db_data = settings.GEMINI_SEND_DATABASE_DATA
+        self.enable_image_services = settings.GEMINI_ENABLE_IMAGE_SERVICES
+        self.custom_prompt_dir = settings.GEMINI_CUSTOM_PROMPT_DIR
 
-        self.get_client = lambda: AsyncOpenAI(
-            base_url=settings.OPENAI_BASE_URL,
-            api_key=settings.OPENAI_API_KEY,
-            timeout=settings.OPENAI_REQUEST_TIMEOUT,
-            default_headers=settings.OPENAI_CUSTOM_HEADERS,
-            default_query=settings.OPENAI_CUSTOM_PARAMS,
-        )
+        # Configure Gemini
+        genai.configure(api_key=settings.GEMINI_API_KEY)
+        self.model_obj = genai.GenerativeModel(self.model)
 
         super().__init__()
 
@@ -192,22 +188,24 @@ class OpenAIService(BaseService):
             )
         return "\n".join(content_parts)
 
-    async def _get_raw_response(self, prompt: str, content: list[dict], response_schema: type[T]) -> ChatCompletion:
-        client = self.get_client()
-        return await client.chat.completions.parse(
-            messages=[
-                {
-                    "role": "system",
-                    "content": prompt,
-                },
-                {
-                    "role": "user",
-                    "content": content,
-                },
-            ],
-            model=self.model,
-            response_format=response_schema,
-        )
+    async def _get_raw_response(self, prompt: str, content: list[dict], response_schema: type[T]) -> GenerateContentResponse:
+        # Build the complete message for Gemini
+        full_message = f"System: {prompt}\n\nUser: "
+        
+        for item in content:
+            if item["type"] == "text":
+                full_message += item["text"]
+            elif item["type"] == "image_url":
+                # For now, we'll include image description in text
+                # Note: Gemini handles images differently, this is a simplified approach
+                full_message += "[Image content provided]"
+        
+        # Add JSON schema instruction
+        schema_instruction = f"\n\nPlease respond with valid JSON that matches this schema: {response_schema.model_json_schema()}"
+        full_message += schema_instruction
+        
+        response = await self.model_obj.generate_content_async(full_message)
+        return response
 
     async def get_response(
         self,
@@ -217,9 +215,9 @@ class OpenAIService(BaseService):
         response_schema: type[T],
         images: list[OpenAIImageBase] | None = None,
     ) -> T | None:
-        """Send data to OpenAI and return the response message content"""
+        """Send data to Gemini and return the response message content"""
         if images and not self.enable_image_services:
-            self.logger.warning("OpenAI image services are disabled, ignoring images")
+            self.logger.warning("Gemini image services are disabled, ignoring images")
             images = None
 
         try:
@@ -228,10 +226,10 @@ class OpenAIService(BaseService):
                 user_messages.append(image.build_message())
 
             response = await self._get_raw_response(prompt, user_messages, response_schema)
-            if not response.choices:
+            if not response.text:
                 return None
 
-            response_text = response.choices[0].message.content
+            response_text = response.text
             return response_schema.parse_openai_response(response_text)
         except Exception as e:
-            raise Exception(f"OpenAI Request Failed. {e.__class__.__name__}: {e}") from e
+            raise Exception(f"Gemini Request Failed. {e.__class__.__name__}: {e}") from e

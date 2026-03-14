@@ -389,57 +389,103 @@ class AppSettings(AppLoggingSettings):
         return self.OIDC_FEATURE.enabled
 
     # ===============================================
-    # OpenAI Configuration
+    # Gemini AI Configuration
 
-    OPENAI_BASE_URL: str | None = None
-    """The base URL for the OpenAI API. Leave this unset for most usecases"""
-    OPENAI_API_KEY: MaskedNoneString = None
-    """Your OpenAI API key. Required to enable OpenAI features"""
-    OPENAI_MODEL: str = "gpt-4o"
-    """Which OpenAI model to send requests to. Leave this unset for most usecases"""
-    OPENAI_CUSTOM_HEADERS: dict[str, str] = {}
-    """Custom HTTP headers to send with each OpenAI request"""
-    OPENAI_CUSTOM_PARAMS: dict[str, Any] = {}
-    """Custom HTTP parameters to send with each OpenAI request"""
-    OPENAI_ENABLE_IMAGE_SERVICES: bool = True
-    """Whether to enable image-related features in OpenAI"""
-    OPENAI_WORKERS: int = 2
+    GEMINI_API_KEY: MaskedNoneString = None
+    """Your Gemini API key. Required to enable AI features"""
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    """Which Gemini model to use. Options: gemini-1.5-pro, gemini-1.5-flash"""
+    GEMINI_ENABLE_IMAGE_SERVICES: bool = True
+    """Whether to enable image-related features in Gemini"""
+    GEMINI_WORKERS: int = 2
     """
-    Number of OpenAI workers per request. Higher values may increase
+    Number of Gemini workers per request. Higher values may increase
     processing speed, but will incur additional API costs
     """
-    OPENAI_SEND_DATABASE_DATA: bool = True
+    GEMINI_SEND_DATABASE_DATA: bool = True
     """
     Sending database data may increase accuracy in certain requests,
     but will incur additional API costs
     """
-    OPENAI_REQUEST_TIMEOUT: int = 300
+    GEMINI_REQUEST_TIMEOUT: int = 300
     """
-    The number of seconds to wait for an OpenAI request to complete before cancelling the request
+    The number of seconds to wait for a Gemini request to complete before cancelling the request
     """
-    OPENAI_CUSTOM_PROMPT_DIR: str | None = None
+    GEMINI_CUSTOM_PROMPT_DIR: str | None = None
     """
     Path to a folder containing custom prompt files;
     files are individually optional, each prompt name will fall back to the default if no custom file exists
     """
 
+    # Legacy OpenAI compatibility (maps to Gemini settings)
     @property
-    def OPENAI_FEATURE(self) -> FeatureDetails:
+    def OPENAI_API_KEY(self) -> str | None:
+        return self.GEMINI_API_KEY
+    
+    @property
+    def OPENAI_MODEL(self) -> str:
+        return self.GEMINI_MODEL
+    
+    @property
+    def OPENAI_ENABLE_IMAGE_SERVICES(self) -> bool:
+        return self.GEMINI_ENABLE_IMAGE_SERVICES
+    
+    @property
+    def OPENAI_WORKERS(self) -> int:
+        return self.GEMINI_WORKERS
+    
+    @property
+    def OPENAI_SEND_DATABASE_DATA(self) -> bool:
+        return self.GEMINI_SEND_DATABASE_DATA
+    
+    @property
+    def OPENAI_REQUEST_TIMEOUT(self) -> int:
+        return self.GEMINI_REQUEST_TIMEOUT
+    
+    @property
+    def OPENAI_CUSTOM_PROMPT_DIR(self) -> str | None:
+        return self.GEMINI_CUSTOM_PROMPT_DIR
+    
+    # Compatibility properties for existing OpenAI-specific settings
+    @property
+    def OPENAI_BASE_URL(self) -> str | None:
+        return None  # Not used with Gemini
+    
+    @property
+    def OPENAI_CUSTOM_HEADERS(self) -> dict[str, str]:
+        return {}  # Not used with Gemini
+    
+    @property
+    def OPENAI_CUSTOM_PARAMS(self) -> dict[str, Any]:
+        return {}  # Not used with Gemini
+
+    @property
+    def GEMINI_FEATURE(self) -> FeatureDetails:
         description = None
-        if not self.OPENAI_API_KEY:
-            description = "OPENAI_API_KEY is not set"
-        elif not self.OPENAI_MODEL:
-            description = "OPENAI_MODEL is not set"
+        if not self.GEMINI_API_KEY:
+            description = "GEMINI_API_KEY is not set"
+        elif not self.GEMINI_MODEL:
+            description = "GEMINI_MODEL is not set"
 
         return FeatureDetails(
-            enabled=bool(self.OPENAI_API_KEY and self.OPENAI_MODEL),
+            enabled=bool(self.GEMINI_API_KEY and self.GEMINI_MODEL),
             description=description,
         )
 
     @property
+    def GEMINI_ENABLED(self) -> bool:
+        """Validates Gemini settings are all set"""
+        return self.GEMINI_FEATURE.enabled
+    
+    # Legacy OpenAI compatibility
+    @property
+    def OPENAI_FEATURE(self) -> FeatureDetails:
+        return self.GEMINI_FEATURE
+
+    @property
     def OPENAI_ENABLED(self) -> bool:
-        """Validates OpenAI settings are all set"""
-        return self.OPENAI_FEATURE.enabled
+        """Validates AI settings are all set (maps to Gemini)"""
+        return self.GEMINI_ENABLED
 
     # ===============================================
     # Web Concurrency

@@ -87,8 +87,8 @@ async def lifespan_fn(_: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(settings.LDAP_FEATURE)
     logger.info("--------==OIDC==--------")
     logger.info(settings.OIDC_FEATURE)
-    logger.info("-------==OPENAI==-------")
-    logger.info(settings.OPENAI_FEATURE)
+    logger.info("-------==GEMINI==-------")
+    logger.info(settings.GEMINI_FEATURE)
     logger.info("------------------------")
 
     yield
@@ -165,7 +165,7 @@ for route in app.routes:
 
 def main():
     uvicorn.run(
-        "app:app",
+        "mealie.app:app",
         host="0.0.0.0",
         port=settings.API_PORT,
         reload=True,

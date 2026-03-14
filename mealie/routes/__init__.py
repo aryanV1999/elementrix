@@ -5,6 +5,7 @@ from . import (
     app,
     auth,
     comments,
+    diet,
     explore,
     groups,
     households,
@@ -33,3 +34,4 @@ router.include_router(unit_and_foods.router)
 router.include_router(admin.router)
 router.include_router(validators.router)
 router.include_router(explore.router)
+router.include_router(diet.router)

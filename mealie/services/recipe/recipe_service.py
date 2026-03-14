@@ -591,8 +591,8 @@ class OpenAIRecipeService(RecipeServiceBase):
 
     async def build_recipe_from_images(self, images: list[Path], translate_language: str | None) -> Recipe:
         settings = get_app_settings()
-        if not (settings.OPENAI_ENABLED and settings.OPENAI_ENABLE_IMAGE_SERVICES):
-            raise ValueError("OpenAI image services are not available")
+        if not (settings.GEMINI_ENABLED and settings.GEMINI_ENABLE_IMAGE_SERVICES):
+            raise ValueError("Gemini image services are not available")
 
         openai_service = OpenAIService()
         prompt = openai_service.get_prompt("recipes.parse-recipe-image")
@@ -617,7 +617,7 @@ class OpenAIRecipeService(RecipeServiceBase):
                 raise ValueError("Received empty response from OpenAI")
 
         except Exception as e:
-            raise Exception("Failed to call OpenAI services") from e
+            raise Exception("Failed to call Gemini services") from e
 
         try:
             recipe = self._convert_recipe(response)

@@ -2,6 +2,9 @@
   "extends": "./.nuxt/tsconfig.json",
   "compilerOptions": {
     "noImplicitAny": false,
-    "verbatimModuleSyntax": false
+    "verbatimModuleSyntax": false,
+    "lib": ["ES2015", "DOM"],
+    "target": "ES2017",
+    "skipLibCheck": true
   }
 }

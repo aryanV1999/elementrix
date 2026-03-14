@@ -146,6 +146,6 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=40s \
     CMD python -m mealie.scripts.healthcheck || exit 1
 
 COPY ./docker/entry.sh $MEALIE_HOME/run.sh
-RUN chmod +x $MEALIE_HOME/run.sh
+RUN sed -i 's/\r$//' $MEALIE_HOME/run.sh && chmod +x $MEALIE_HOME/run.sh
 
 ENTRYPOINT ["/app/run.sh"]

@@ -1,9 +1,9 @@
 import type { AxiosInstance, AxiosResponse, AxiosRequestConfig } from "axios";
 import type { Composer } from "vue-i18n";
-import type { ApiRequestInstance, RequestResponse } from "~/lib/api/types/non-generated";
-import { AdminAPI, PublicApi, UserApi } from "~/lib/api";
-import { PublicExploreApi } from "~/lib/api/client-public";
-import { useGlobalI18n } from "~/composables/use-global-i18n";
+import type { ApiRequestInstance, RequestResponse } from "../../lib/api/types/non-generated";
+import { AdminAPI, PublicApi, UserApi } from "../../lib/api";
+import { PublicExploreApi } from "../../lib/api/client-public";
+import { useGlobalI18n } from "../use-global-i18n";
 
 const request = {
   async safe<T, U>(
