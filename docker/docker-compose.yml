@@ -60,7 +60,7 @@ services:
       # Gemini AI (set this in your local .env or environment; do NOT commit secrets)
       # Get your key from: https://makersuite.google.com/app/apikey
       # Example: GEMINI_API_KEY=AIza-REPLACE_WITH_YOUR_GEMINI_KEY
-      GEMINI_API_KEY: "AIzaSyB5iQdi540eEQZUBDgnsS_rlU_L_BAWOIA"
+      GEMINI_API_KEY: "AIzaSyDVDNrChPRR_mz4X_XUTSP_nraS3pIdSx4"
       GEMINI_MODEL: "gemini-2.5-flash"
     networks:
       - mealie-network

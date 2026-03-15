@@ -1,4 +1,5 @@
 from .cookbook import CookBook
+from .diet_plan import DietPlanMealTracking, SavedDietPlan
 from .events import GroupEventNotifierModel, GroupEventNotifierOptionsModel
 from .household import Household
 from .household_to_recipe import HouseholdToRecipe
@@ -18,6 +19,7 @@ from .webhooks import GroupWebhooksModel
 
 __all__ = [
     "CookBook",
+    "DietPlanMealTracking",
     "GroupEventNotifierModel",
     "GroupEventNotifierOptionsModel",
     "GroupInviteToken",
@@ -27,6 +29,7 @@ __all__ = [
     "HouseholdPreferencesModel",
     "HouseholdToRecipe",
     "GroupRecipeAction",
+    "SavedDietPlan",
     "ShoppingList",
     "ShoppingListExtras",
     "ShoppingListItem",

@@ -1,9 +1,15 @@
+from datetime import datetime
 from typing import Optional, List
+from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
 
 from mealie.core.config import get_app_settings
 from mealie.core import root_logger
+from mealie.db.db_setup import generate_session
+from mealie.db.models.household.diet_plan import SavedDietPlan, DietPlanMealTracking
+from mealie.repos.repository_diet_plans import RepositorySavedDietPlans, RepositoryMealTracking
 from mealie.schema.diet import (
     DietInput,
     DietPlanResponse,
@@ -11,10 +17,22 @@ from mealie.schema.diet import (
     MealItem,
     MacroNutrients,
 )
+from mealie.schema.diet.saved_diet_plan import (
+    SavedDietPlanCreate,
+    SavedDietPlanOut,
+    SavedDietPlanSummary,
+    MealTrackingOut,
+    ToggleMealRequest,
+)
 from mealie.services.diet import DietService
 
 router = APIRouter(prefix="/diet")
 logger = root_logger.get_logger(__name__)
+
+
+def get_db():
+    """Dependency that provides a database session"""
+    yield from generate_session()
 
 
 class CalorieCalculation:
@@ -164,8 +182,8 @@ async def generate_weekly_diet_plan(payload: DietInput):
 @router.post("/regenerate-meal", response_model=MealItem)
 async def regenerate_meal(
     payload: DietInput,
-    meal_type: str,
-    exclude_meals: Optional[List[str]] = None
+    meal_type: str = Query(..., description="Type of meal: Breakfast, Lunch, Snack, or Dinner"),
+    exclude_meals: Optional[List[str]] = Query(default=None, description="List of meal names to avoid")
 ):
     """
     Regenerate a single meal.
@@ -216,3 +234,248 @@ async def get_diet_generator_status():
         "enabled": settings.GEMINI_ENABLED,
         "message": "Diet Generator is available" if settings.GEMINI_ENABLED else "Gemini AI is not configured",
     }
+
+
+# ============================================
+# Saved Diet Plans Endpoints
+# ============================================
+
+@router.post("/plans/save", response_model=SavedDietPlanOut)
+async def save_diet_plan(
+    data: SavedDietPlanCreate,
+    user_id: UUID = Query(..., description="User ID"),
+    group_id: UUID = Query(..., description="Group ID"),
+    db: Session = Depends(get_db),
+):
+    """
+    Save a generated diet plan for tracking.
+    
+    This endpoint saves a diet plan to the database so users can:
+    - Track meal completion
+    - Follow the plan over time
+    - View their progress
+    """
+    try:
+        repo = RepositorySavedDietPlans(db)
+        plan = repo.create_plan(user_id, group_id, data)
+        return SavedDietPlanOut.model_validate(plan)
+    except Exception as e:
+        logger.exception(f"Error saving diet plan: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save diet plan"
+        )
+
+
+@router.get("/plans/active", response_model=Optional[SavedDietPlanOut])
+async def get_active_diet_plan(
+    user_id: UUID = Query(..., description="User ID"),
+    db: Session = Depends(get_db),
+):
+    """
+    Get the currently active diet plan for a user.
+    
+    Returns the plan the user is currently following, or null if none is active.
+    """
+    try:
+        repo = RepositorySavedDietPlans(db)
+        plan = repo.get_active_plan_for_user(user_id)
+        if plan:
+            return SavedDietPlanOut.model_validate(plan)
+        return None
+    except Exception as e:
+        logger.exception(f"Error fetching active diet plan: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch active diet plan"
+        )
+
+
+@router.get("/plans", response_model=List[SavedDietPlanSummary])
+async def get_all_diet_plans(
+    user_id: UUID = Query(..., description="User ID"),
+    db: Session = Depends(get_db),
+):
+    """
+    Get all saved diet plans for a user.
+    
+    Returns a list of all saved plans with summary information.
+    """
+    try:
+        repo = RepositorySavedDietPlans(db)
+        plans = repo.get_plans_for_user(user_id)
+        return [SavedDietPlanSummary.model_validate(p) for p in plans]
+    except Exception as e:
+        logger.exception(f"Error fetching diet plans: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch diet plans"
+        )
+
+
+@router.get("/plans/{plan_id}", response_model=SavedDietPlanOut)
+async def get_diet_plan(
+    plan_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """
+    Get a specific diet plan by ID.
+    """
+    try:
+        repo = RepositorySavedDietPlans(db)
+        plan = repo.get_one(plan_id)
+        if not plan:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Diet plan not found"
+            )
+        return SavedDietPlanOut.model_validate(plan)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error fetching diet plan: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch diet plan"
+        )
+
+
+@router.post("/plans/{plan_id}/activate", response_model=SavedDietPlanOut)
+async def activate_diet_plan(
+    plan_id: UUID,
+    user_id: UUID = Query(..., description="User ID"),
+    db: Session = Depends(get_db),
+):
+    """
+    Activate a specific diet plan (deactivates others).
+    """
+    try:
+        repo = RepositorySavedDietPlans(db)
+        plan = repo.activate_plan(plan_id, user_id)
+        if not plan:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Diet plan not found or not authorized"
+            )
+        return SavedDietPlanOut.model_validate(plan)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error activating diet plan: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to activate diet plan"
+        )
+
+
+@router.delete("/plans/{plan_id}")
+async def delete_diet_plan(
+    plan_id: UUID,
+    user_id: UUID = Query(..., description="User ID"),
+    db: Session = Depends(get_db),
+):
+    """
+    Delete a saved diet plan.
+    """
+    try:
+        repo = RepositorySavedDietPlans(db)
+        plan = repo.get_one(plan_id)
+        if not plan:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Diet plan not found"
+            )
+        if plan.user_id != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to delete this plan"
+            )
+        repo.delete(plan_id)
+        return {"status": "success", "message": "Diet plan deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error deleting diet plan: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete diet plan"
+        )
+
+
+# ============================================
+# Meal Tracking Endpoints
+# ============================================
+
+@router.post("/plans/{plan_id}/track-meal", response_model=MealTrackingOut)
+async def toggle_meal_completion(
+    plan_id: UUID,
+    data: ToggleMealRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Toggle a meal's completion status.
+    
+    Use this when a user marks a meal as eaten or uneaten.
+    """
+    try:
+        repo = RepositoryMealTracking(db)
+        tracking = repo.toggle_meal_completion(
+            diet_plan_id=plan_id,
+            day_number=data.day_number,
+            meal_type=data.meal_type,
+            meal_name=data.meal_name,
+            is_completed=data.is_completed,
+        )
+        return MealTrackingOut.model_validate(tracking)
+    except Exception as e:
+        logger.exception(f"Error tracking meal: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to track meal"
+        )
+
+
+@router.get("/plans/{plan_id}/tracking", response_model=List[MealTrackingOut])
+async def get_plan_tracking(
+    plan_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """
+    Get all meal tracking records for a diet plan.
+    """
+    try:
+        repo = RepositoryMealTracking(db)
+        tracking = repo.get_tracking_for_plan(plan_id)
+        return [MealTrackingOut.model_validate(t) for t in tracking]
+    except Exception as e:
+        logger.exception(f"Error fetching tracking: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch tracking data"
+        )
+
+
+@router.get("/plans/{plan_id}/stats")
+async def get_plan_stats(
+    plan_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """
+    Get completion statistics for a diet plan.
+    
+    Returns:
+    - total_meals: Total meals in the plan
+    - completed_meals: Number of completed meals
+    - completion_percentage: Percentage complete
+    - days_completed: List of fully completed days
+    """
+    try:
+        repo = RepositoryMealTracking(db)
+        stats = repo.get_completion_stats(plan_id)
+        return stats
+    except Exception as e:
+        logger.exception(f"Error fetching stats: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch statistics"
+        )

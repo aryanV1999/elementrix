@@ -19,6 +19,7 @@ from .user_to_recipe import UserToRecipe
 if TYPE_CHECKING:
     from ..group import Group
     from ..household import Household
+    from ..household.diet_plan import SavedDietPlan
     from ..household.mealplan import GroupMealPlan
     from ..household.shopping_list import ShoppingList
     from ..recipe import RecipeComment, RecipeModel, RecipeTimelineEvent
@@ -93,6 +94,9 @@ class User(SqlAlchemyBase, BaseMixins):
         "GroupMealPlan", order_by="GroupMealPlan.date", **sp_args
     )
     shopping_lists: Mapped[Optional["ShoppingList"]] = orm.relationship("ShoppingList", **sp_args)
+    diet_plans: Mapped[list["SavedDietPlan"]] = orm.relationship(
+        "SavedDietPlan", back_populates="user", cascade="all, delete-orphan"
+    )
     rated_recipes: Mapped[list["RecipeModel"]] = orm.relationship(
         "RecipeModel",
         secondary=UserToRecipe.__tablename__,

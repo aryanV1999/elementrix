@@ -18,11 +18,11 @@ logger = root_logger.get_logger(__name__)
 
 class DietService(BaseService):
     """
-    Service for generating AI-powered diet plans using OpenAI.
+    Service for generating AI-powered diet plans using Gemini AI.
     
     This service handles:
     - Calorie and macro calculations
-    - Building prompts for OpenAI
+    - Building prompts for Gemini
     - Parsing and validating responses
     - Meal optimization (adjusting portions to match targets)
     """
@@ -35,7 +35,7 @@ class DietService(BaseService):
         if not settings.GEMINI_ENABLED:
             raise ValueError("Gemini AI is not enabled. Diet Generator requires Gemini AI.")
         
-        self.openai_service = OpenAIService()
+        self.ai_service = OpenAIService()  # Uses Gemini under the hood
         super().__init__()
 
     def _build_user_message(self, payload: DietInput, daily_calories: int, macros: dict) -> str:
@@ -177,7 +177,7 @@ class DietService(BaseService):
         logger.info(f"Generating diet plan: {daily_calories} cal, {macros}")
 
         # Build prompt with data injection
-        prompt = self.openai_service.get_prompt(
+        prompt = self.ai_service.get_prompt(
             self.PROMPT_DAILY,
             data_injections=[
                 OpenAIDataInjection(
@@ -190,7 +190,7 @@ class DietService(BaseService):
         message = self._build_user_message(payload, daily_calories, macros.model_dump())
 
         # Call OpenAI
-        response = await self.openai_service.get_response(
+        response = await self.ai_service.get_response(
             prompt=prompt,
             message=message,
             response_schema=DietPlanResponse,
@@ -237,7 +237,7 @@ class DietService(BaseService):
         logger.info(f"Generating weekly diet plan: {daily_calories} cal/day, {macros}")
 
         # Build prompt with data injection
-        prompt = self.openai_service.get_prompt(
+        prompt = self.ai_service.get_prompt(
             self.PROMPT_WEEKLY,
             data_injections=[
                 OpenAIDataInjection(
@@ -250,7 +250,7 @@ class DietService(BaseService):
         message = self._build_weekly_message(payload, daily_calories, macros.model_dump())
 
         # Call OpenAI
-        response = await self.openai_service.get_response(
+        response = await self.ai_service.get_response(
             prompt=prompt,
             message=message,
             response_schema=WeeklyDietPlan,
@@ -328,17 +328,17 @@ class DietService(BaseService):
         message_parts.append("")
         message_parts.append("Return a single meal object matching the MealItem schema.")
 
-        prompt = self.openai_service.get_prompt(self.PROMPT_DAILY)
+        prompt = self.ai_service.get_prompt(self.PROMPT_DAILY)
         message = "\n".join(message_parts)
 
-        # For single meal, we wrap in DietPlanResponse and extract the first meal
-        response = await self.openai_service.get_response(
+        # For single meal, use MealItem schema directly
+        response = await self.ai_service.get_response(
             prompt=prompt,
             message=message,
-            response_schema=DietPlanResponse,
+            response_schema=MealItem,
         )
 
-        if response is None or not response.meals:
+        if response is None:
             raise ValueError(f"Failed to generate {meal_type} meal")
 
-        return response.meals[0]
+        return response
