@@ -8,6 +8,7 @@ from mealie.schema.user.user_passwords import SavePasswordResetToken
 from mealie.services._base_service import BaseService
 from mealie.services.email import EmailService
 
+from datetime import datetime, timedelta
 
 class PasswordResetService(BaseService):
     def __init__(self, session: Session) -> None:
@@ -49,13 +50,19 @@ class PasswordResetService(BaseService):
             raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to send reset email") from e
 
     def reset_password(self, token: str, new_password: str):
+        MAX_TOKEN_AGE = timedelta(hours=1)
         # Validate Token
         token_entry = self.db.tokens_pw_reset.get_one(token, "token")
 
         if token_entry is None:
             self.logger.error("failed to reset password: invalid token")
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid token")
-
+        
+        # NEW VALIDATION
+        if datetime.utcnow() - token_entry.created_at > MAX_TOKEN_AGE:
+            self.logger.error("failed to reset password: token expired")
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Token expired")
+            
         user = self.db.users.get_one(token_entry.user_id)
         # Update Password
         password_hash = hash_password(new_password)
